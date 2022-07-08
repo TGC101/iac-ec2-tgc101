@@ -113,7 +113,7 @@
             - ansible_facts['hostname'] == 'master'
 
         - name: restart nginx
-          sysyemd:
+          systemd:
             name: nginx
             state: restarted
           when:
