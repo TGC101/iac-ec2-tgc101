@@ -1,0 +1,120 @@
+---
+- name: init k8s cluster
+  hosts: all
+  tasks:
+    - name: Install docker
+      apt:
+        update_cache: yes
+        state: present
+        name: 
+          - docker.io
+          - docker-compose 
+          - apt-transport-https
+          - ca-certificates 
+          - curl
+
+    - name: K8s prepare env
+      shell: |
+        cat <<EOF | tee /etc/modules-load.d/k8s.conf
+        br_netfilter
+        EOF
+        cat <<EOF | tee /etc/sysctl.d/k8s.conf
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.bridge.bridge-nf-call-iptables = 1
+        EOF
+        sysctl --system
+        curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
+        cat <<EOF | tee /etc/docker/daemon.json
+        {
+          "exec-opts": ["native.cgroupdriver=systemd"],
+          "log-driver": "json-file",
+          "log-opts": {
+            "max-size": "100m"
+          },
+          "storage-driver": "overlay2"
+        }
+        EOF
+    - name: Install k8s
+      apt:
+        update_cache: yes
+        state: present
+        name: 
+          - kubelet=1.22.0-00
+          - kubeadm=1.22.0-00
+          - kubectl=1.22.0-00
+ 
+    - name: Restart docker
+      systemd:
+        name: docker
+        state: restarted
+
+    - name: Kubeadmin init - only master
+      shell: |
+        kubeadm init --service-cidr 10.96.0.0/12 --pod-network-cidr 10.244.0.0/16 --apiserver-advertise-address 0.0.0.0 
+        mkdir -p /root/.kube
+        cp  /etc/kubernetes/admin.conf /root/.kube/config
+        chown $(id -u):$(id -g) /root/.kube/config
+        kubeadm token create --print-join-command > /tmp/.token
+        kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+      when: 
+        - ansible_facts['hostname'] == 'master'
+    
+    - name: Get token
+      fetch:
+        src: /tmp/.token
+        dest: ./token
+        flat: yes
+      when: 
+        - ansible_facts['hostname'] == 'master'  
+
+    - name: Send token
+      copy:
+        src: ./token
+        dest: /tmp/.token
+      when: 
+        - ansible_facts['hostname'] != 'master' 
+
+    - name: Join to master
+      shell: |
+        bash /tmp/.token
+      when: 
+        - ansible_facts['hostname'] != 'master'  
+    
+    - name: App apply
+      shell: |
+        mkdir -p /lab
+        wget https://how64bit.com/tgc101-devops-demo/db.yml -P /lab 
+        wget https://how64bit.com/tgc101-devops-demo/php.yml -P /lab 
+        wget https://how64bit.com/tgc101-devops-demo/nginx.yml -P /lab
+        chmod -R 770 /lab
+        kubectl apply -f /lab/.
+      when: 
+        - ansible_facts['hostname'] == 'master'
+
+    - name: install nginx
+      apt:
+        update_cache: yes
+        state: present
+        name: 
+          - nginx 
+      when: 
+        - ansible_facts['hostname'] == 'master'
+      
+    
+    - name: Nginx config
+      hosts: all
+      tasks:
+        - name: Nginx config
+          template:
+            src: templates/host.j2
+            dest: /etc/nginx/sites-enabled/default
+          when:
+            - ansible_facts['hostname'] == 'master'
+
+        - name: restart nginx
+          sysyemd:
+            name: nginx
+            state: restarted
+          when:
+            - ansible_facts['hostname'] == 'master'
