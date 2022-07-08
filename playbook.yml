@@ -102,19 +102,17 @@
         - ansible_facts['hostname'] == 'master'
       
     
-    - name: Nginx config
-      hosts: all
-      tasks:
-        - name: Nginx config
-          template:
-            src: templates/host.j2
-            dest: /etc/nginx/sites-enabled/default
-          when:
-            - ansible_facts['hostname'] == 'master'
 
-        - name: restart nginx
-          systemd:
-            name: nginx
-            state: restarted
-          when:
-            - ansible_facts['hostname'] == 'master'
+    - name: Nginx config
+      template:
+        src: templates/host.j2
+        dest: /etc/nginx/sites-enabled/default
+      when:
+        - ansible_facts['hostname'] == 'master'
+
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+      when:
+        - ansible_facts['hostname'] == 'master'
